@@ -11,6 +11,8 @@
 #include "peer.h"
 #include "messages.h"
 
+#include "logging.h"
+
 #include <linux/module.h>
 #include <linux/rtnetlink.h>
 #include <linux/inet.h>
@@ -23,6 +25,8 @@
 #include <net/rtnetlink.h>
 #include <net/ip_tunnels.h>
 #include <net/addrconf.h>
+
+__le32 WG_MESSAGE_ID_COUNTER = 0;
 
 static LIST_HEAD(device_list);
 
@@ -129,6 +133,12 @@ static netdev_tx_t wg_xmit(struct sk_buff *skb, struct net_device *dev)
 	sa_family_t family;
 	u32 mtu;
 	int ret;
+
+#ifdef _WG_LOGGING_SEND
+	// Set message identifier and increase for next packet
+	PACKET_CB(skb)->message_id = WG_MESSAGE_ID_COUNTER++;
+	wg_log_packet(PACKET_CB(skb)->message_id, LOG_STEP_SEND_XMIT);
+#endif
 
 	if (unlikely(!wg_check_packet_protocol(skb))) {
 		ret = -EPROTONOSUPPORT;

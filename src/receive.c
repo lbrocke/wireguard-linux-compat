@@ -11,6 +11,8 @@
 #include "cookie.h"
 #include "socket.h"
 
+#include "logging.h"
+
 #include <linux/simd.h>
 #include <linux/ip.h>
 #include <linux/ipv6.h>
@@ -254,6 +256,10 @@ static bool decrypt_packet(struct sk_buff *skb, struct noise_keypair *keypair,
 	unsigned int offset;
 	int num_frags;
 
+#ifdef _WG_LOGGING_RECEIVE
+	wg_log_packet(PACKET_CB(skb)->message_id, LOG_STEP_RECEIVE_BEFORE_DECRYPTION);
+#endif
+
 	if (unlikely(!keypair))
 		return false;
 
@@ -288,6 +294,10 @@ static bool decrypt_packet(struct sk_buff *skb, struct noise_keypair *keypair,
 						 keypair->receiving.key,
 						 simd_context))
 		return false;
+
+#ifdef _WG_LOGGING_RECEIVE
+	wg_log_packet(PACKET_CB(skb)->message_id, LOG_STEP_RECEIVE_DECRYPTED);
+#endif
 
 	/* Another ugly situation of pushing and pulling the header so as to
 	 * keep endpoint information intact.
@@ -427,6 +437,9 @@ static void wg_packet_consume_data_done(struct wg_peer *peer,
 	} else {
 		update_rx_stats(peer, message_data_len(len_before_trim));
 	}
+#ifdef _WG_LOGGING_RECEIVE
+	wg_log_packet(PACKET_CB(skb)->message_id, LOG_STEP_RECEIVE_RECEIVED);
+#endif
 	return;
 
 dishonest_packet_peer:
@@ -474,6 +487,10 @@ int wg_packet_rx_poll(struct napi_struct *napi, int budget)
 		keypair = PACKET_CB(skb)->keypair;
 		free = true;
 
+#ifdef _WG_LOGGING_RECEIVE
+		wg_log_packet(PACKET_CB(skb)->message_id, LOG_STEP_RECEIVE_RX_CONSUMED);
+#endif
+
 		if (unlikely(state != PACKET_STATE_CRYPTED))
 			goto next;
 
@@ -518,7 +535,11 @@ void wg_packet_decrypt_worker(struct work_struct *work)
 
 	simd_get(&simd_context);
 	while ((skb = ptr_ring_consume_bh(&queue->ring)) != NULL) {
-		enum packet_state state =
+		enum packet_state state;
+#ifdef _WG_LOGGING_RECEIVE
+		wg_log_packet(PACKET_CB(skb)->message_id, LOG_STEP_RECEIVE_CONSUMED);
+#endif
+		state =
 			likely(decrypt_packet(skb, PACKET_CB(skb)->keypair,
 					      &simd_context)) ?
 				PACKET_STATE_CRYPTED : PACKET_STATE_DEAD;
@@ -552,6 +573,9 @@ static void wg_packet_consume_data(struct wg_device *wg, struct sk_buff *skb)
 						   &wg->decrypt_queue.last_cpu);
 	if (unlikely(ret == -EPIPE))
 		wg_queue_enqueue_per_peer_napi(skb, PACKET_STATE_DEAD);
+#ifdef _WG_LOGGING_RECEIVE
+	wg_log_packet(PACKET_CB(skb)->message_id, LOG_STEP_RECEIVE_ENQUEUED);
+#endif
 	if (likely(!ret || ret == -EPIPE)) {
 		rcu_read_unlock_bh();
 		return;

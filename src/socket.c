@@ -9,6 +9,8 @@
 #include "queueing.h"
 #include "messages.h"
 
+#include "logging.h"
+
 #include <linux/ctype.h>
 #include <linux/net.h>
 #include <linux/if_vlan.h>
@@ -178,6 +180,9 @@ int wg_socket_send_skb_to_peer(struct wg_peer *peer, struct sk_buff *skb, u8 ds)
 			    &peer->endpoint_cache);
 	else
 		dev_kfree_skb(skb);
+#ifdef _WG_LOGGING_SEND
+	wg_log_packet(PACKET_CB(skb)->message_id, LOG_STEP_SEND_SENT);
+#endif
 	if (likely(!ret))
 		peer->tx_bytes += skb_len;
 	read_unlock_bh(&peer->endpoint_lock);
@@ -315,6 +320,14 @@ void wg_socket_clear_peer_endpoint_src(struct wg_peer *peer)
 static int wg_receive(struct sock *sk, struct sk_buff *skb)
 {
 	struct wg_device *wg;
+
+#ifdef _WG_LOGGING_RECEIVE
+	// Extract message id from data and put into skb control block
+	PACKET_CB(skb)->message_id =
+		le32_to_cpu(((struct message_data *)skb->data)->id);
+
+	wg_log_packet(PACKET_CB(skb)->message_id, LOG_STEP_RECEIVE_SOCKET);
+#endif
 
 	if (unlikely(!sk))
 		goto err;

@@ -60,6 +60,11 @@ struct packet_cb {
 	atomic_t state;
 	u32 mtu;
 	u8 ds;
+	// This custom unsigned 32 bit integer holds an identifier which is
+	// inserted at the beginning of the skb lifetime.
+	// It is used to "track" an individual packet and log timestamps at
+	// certain steps throughout the sending and receiving process
+	u32 message_id;
 };
 
 #define PACKET_CB(skb) ((struct packet_cb *)((skb)->cb))

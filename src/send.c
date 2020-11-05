@@ -11,6 +11,8 @@
 #include "messages.h"
 #include "cookie.h"
 
+#include "logging.h"
+
 #include <linux/simd.h>
 #include <linux/uio.h>
 #include <linux/inetdevice.h>
@@ -168,6 +170,11 @@ static bool encrypt_packet(struct sk_buff *skb, struct noise_keypair *keypair,
 	struct message_data *header;
 	struct sk_buff *trailer;
 	int num_frags;
+	bool ret;
+
+#ifdef _WG_LOGGING_SEND
+	wg_log_packet(PACKET_CB(skb)->message_id, LOG_STEP_SEND_BEFORE_ENCRYPTION);
+#endif
 
 	/* Force hash calculation before encryption so that flow analysis is
 	 * consistent over the inner packet.
@@ -208,6 +215,10 @@ static bool encrypt_packet(struct sk_buff *skb, struct noise_keypair *keypair,
 	header->header.type = cpu_to_le32(MESSAGE_DATA);
 	header->key_idx = keypair->remote_index;
 	header->counter = cpu_to_le64(PACKET_CB(skb)->nonce);
+#ifdef _WG_LOGGING_SEND
+	// Insert message identifier into message_data struct
+	header->id = cpu_to_le32(PACKET_CB(skb)->message_id);
+#endif
 	pskb_put(skb, trailer, trailer_len);
 
 	/* Now we can encrypt the scattergather segments */
@@ -215,10 +226,14 @@ static bool encrypt_packet(struct sk_buff *skb, struct noise_keypair *keypair,
 	if (skb_to_sgvec(skb, sg, sizeof(struct message_data),
 			 noise_encrypted_len(plaintext_len)) <= 0)
 		return false;
-	return chacha20poly1305_encrypt_sg_inplace(sg, plaintext_len, NULL, 0,
+	ret = chacha20poly1305_encrypt_sg_inplace(sg, plaintext_len, NULL, 0,
 						   PACKET_CB(skb)->nonce,
 						   keypair->sending.key,
 						   simd_context);
+#ifdef _WG_LOGGING_SEND
+	wg_log_packet(PACKET_CB(skb)->message_id, LOG_STEP_SEND_ENCRYPTED);
+#endif
+	return ret;
 }
 
 void wg_packet_send_keepalive(struct wg_peer *peer)
@@ -279,6 +294,10 @@ void wg_packet_tx_worker(struct work_struct *work)
 		peer = PACKET_PEER(first);
 		keypair = PACKET_CB(first)->keypair;
 
+#ifdef _WG_LOGGING_SEND
+		wg_log_packet(PACKET_CB(first)->message_id, LOG_STEP_SEND_TX_CONSUMED);
+#endif
+
 		if (likely(state == PACKET_STATE_CRYPTED))
 			wg_packet_create_data_done(first, peer);
 		else
@@ -303,6 +322,9 @@ void wg_packet_encrypt_worker(struct work_struct *work)
 		enum packet_state state = PACKET_STATE_CRYPTED;
 
 		skb_list_walk_safe(first, skb, next) {
+#ifdef _WG_LOGGING_SEND
+			wg_log_packet(PACKET_CB(first)->message_id, LOG_STEP_SEND_CONSUMED);
+#endif
 			if (likely(encrypt_packet(skb,
 						  PACKET_CB(first)->keypair,
 						  &simd_context))) {
@@ -337,6 +359,9 @@ static void wg_packet_create_data(struct sk_buff *first)
 	if (unlikely(ret == -EPIPE))
 		wg_queue_enqueue_per_peer(&peer->tx_queue, first,
 					  PACKET_STATE_DEAD);
+#ifdef _WG_LOGGING_SEND
+	wg_log_packet(PACKET_CB(first)->message_id, LOG_STEP_SEND_ENQUEUED);
+#endif
 err:
 	rcu_read_unlock_bh();
 	if (likely(!ret || ret == -EPIPE))

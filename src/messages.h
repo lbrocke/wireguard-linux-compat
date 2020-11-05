@@ -106,6 +106,11 @@ struct message_data {
 	struct message_header header;
 	__le32 key_idx;
 	__le64 counter;
+	// Custom id field that is filled with the message identifier
+	// from the packet's skb control block.
+	// This id is transferred over to the receiving peer and extracted
+	// there.
+	__le32 id;
 	u8 encrypted_data[];
 };
 
